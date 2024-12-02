@@ -111,13 +111,92 @@ class PACKPOOL:
         cards = np.random.choice(card_list, size=num_cards, p=list(probabilities.values()))
         return sum(self.market_values[card] for card in cards)
 
-class PACKPULL:
-    def __init__(self, mu_list, T=30):
-        self.__K = len(mu_list)
-        self.__mu_list = mu_list
-        self.__T = T
-        self.__record = np.zeros((self.__K,2))
-        self.__regrets = []
+class ThompsonSampling:
+    def __init__(self, pack_pool, budget=180):
+        """
+        Initialize the Thompson Sampling algorithm for the PACKPOOL.
 
-test = PACKPOOL()
-print(test.foil_probabilities)
+        Parameters:
+        - pack_pool (PACKPOOL): The PACKPOOL instance with packs to be sampled.
+        - budget (int): Number of total pack openings allowed.
+        """
+        self.pack_pool = pack_pool
+        self.num_packs = pack_pool.num_packs
+        self.budget = budget
+        
+        # Beta distribution parameters for each pack
+        self.alpha = np.ones(self.num_packs)  # Success count
+        self.beta = np.ones(self.num_packs)   # Failure count
+        
+        # Store results
+        self.total_rewards = np.zeros(self.num_packs)  # Cumulative market value for each pack
+        self.total_attempts = np.zeros(self.num_packs)  # Number of times each pack was opened
+
+    def run(self):
+        """
+        Run the Thompson Sampling algorithm for the specified budget.
+        """
+        epsilon = 1e-6  # Small value to ensure beta parameters remain positive
+
+        for _ in range(self.budget):
+            # Sample from the beta distribution for each pack
+            theta_hat = np.random.beta(self.alpha, self.beta)
+            
+            # Choose the pack with the highest sampled mean
+            selected_pack = np.argmax(theta_hat)
+            
+            # Open the selected pack and calculate its value
+            reward = self.pack_pool.open_pack(selected_pack)
+            
+            # Normalize reward to a [0, 1] scale for beta distribution updates
+            normalized_reward = reward / max(self.pack_pool.market_values.values())
+            normalized_reward = np.clip(normalized_reward, 0, 1)  # Ensure reward is within [0, 1]
+            
+            # Update reward totals and counts
+            self.total_rewards[selected_pack] += reward
+            self.total_attempts[selected_pack] += 1
+            
+            # Update the beta distribution parameters
+            self.alpha[selected_pack] += normalized_reward + epsilon
+            self.beta[selected_pack] += (1 - normalized_reward) + epsilon
+
+
+    def compute_regret(self):
+        """
+        Compute the regret for the Thompson Sampling process.
+
+        Returns:
+        - regret (float): Total regret across the budgeted openings.
+        """
+        # Find the optimal pack's average reward
+        optimal_pack_value = max(
+            np.sum([self.pack_pool.market_values[card] for card in pack["common_list"]]) * 4 / len(pack["common_list"]) +
+            np.sum([self.pack_pool.market_values[card] for card in pack["uncommon_list"]]) * 3 / len(pack["uncommon_list"]) +
+            np.sum([self.pack_pool.market_values[card] for card in pack["foil_list"]]) * 3 / len(pack["foil_list"])
+            for pack in self.pack_pool.packs
+        )
+        
+        # Compute regret as the difference between optimal and obtained values
+        total_obtained_value = sum(self.total_rewards)
+        regret = optimal_pack_value * self.budget - total_obtained_value
+        return regret
+
+    def results(self):
+        """
+        Print the results of the Thompson Sampling process.
+        """
+        for i in range(self.num_packs):
+            print(f"Pack {i}:")
+            print(f"  Total value: {self.total_rewards[i]:.2f}")
+            print(f"  Times opened: {int(self.total_attempts[i])}")
+        print(f"Total regret: {self.compute_regret():.2f}")
+
+# Initialize a PACKPOOL with 5 packs
+pack_pool = PACKPOOL(num_packs=5)
+
+# Run Thompson Sampling to minimize regret
+thompson = ThompsonSampling(pack_pool, budget=180)
+thompson.run()
+
+# Display the results
+thompson.results()
