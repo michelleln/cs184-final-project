@@ -1,0 +1,198 @@
+import numpy as np
+import random
+
+cglobal_list = ["mushroom", "moth", "bramble", "mantis", "beetle", "pollenpuff", "crown", "goat", "fox", "horse", "magma", "anteater", "lizard", "centipede", "duck", 
+                "jellyfish", "seal", "clam", "crab", "seahorse", "goldfish", "swan", "cucumber", "triggerfish", "snowmoth", "ball", "electric", "jolt", "zebra", 
+                "frill", "urchin", "fairy", "slow", "mime", "model", "stamp", "golem", "pangolin", "mole", "ape", "boomerang", "kick", "punch", "drill", "martial", 
+                "octopus", "snake", "bat", "maw", "blades", "rat", "sparrow", "cat", "leek", "trio", "tongue", "egg", "bull", "data", "chinchilla", "sheep"]
+uglobal_list = ["toad", "butterfly", "bee", "flower", "pitcher", "tree", "firedragon", "dog", "flare", "firebird", "turtle", "frog", "starfish", "carp", "nessie", 
+                "vapor", "nautilus", "icebird", "ninja", "mouse", "magnet", "zapbird", "eel", "spoons", "ghost", "hypnosis", "experiment", "lady", "wrestler", 
+                "boulder", "rocksnake", "horseshoe", "queen", "king", "sludge", "gas", "boltnut", "dragon", "pidgeon", "song", "parent", "mimic", "pterodactyl", 
+                "bear"]
+fglobal_list = ["toad", "tree", "firedragon", "dog", "firebird", "turtle", "starfish", "icebird", "mouse", "zapbird", "ghost", "experiment", "wrestler", "boomerang", 
+                "song", "origin"]
+
+class PACKPOOL:
+    def __init__(self, num_packs=5):
+        """
+        Initialize the PACKPOOL with a fixed number of packs and set market values for cards.
+        
+        Parameters:
+        - num_packs (int): Number of packs in the pool.
+        """
+        self.num_packs = num_packs
+
+        # Define fixed market values for all cards with constraints
+        self.market_values = self.set_market_values()
+
+        # Initialize packs
+        self.packs = [
+            {
+                "common_list": random.sample(cglobal_list, 38),
+                "uncommon_list": random.sample(uglobal_list, 14),
+                "foil_list": random.sample(fglobal_list, 6),
+                "common_probabilities": None,
+                "uncommon_probabilities": None,
+                "foil_probabilities": None
+            }
+            for _ in range(self.num_packs)
+        ]
+
+        # Assign probabilities for each pack
+        for pack in self.packs:
+            pack["common_probabilities"] = self.assign_probabilities(pack["common_list"])
+            pack["uncommon_probabilities"] = self.assign_probabilities(pack["uncommon_list"])
+            pack["foil_probabilities"] = self.assign_probabilities(pack["foil_list"])
+
+    def set_market_values(self):
+        """
+        Assign fixed market values to all cards in the global lists with constraints:
+        - Common cards: 1 to 5
+        - Uncommon cards: 6 to 10
+        - Foil cards: 11 to 20
+        
+        Returns:
+        - dict: A dictionary with card names as keys and their fixed market values as values.
+        """
+        common_values = {card: np.random.uniform(1, 5) for card in cglobal_list}
+        uncommon_values = {card: np.random.uniform(6, 10) for card in uglobal_list}
+        foil_values = {card: np.random.uniform(11, 20) for card in fglobal_list}
+        return {**common_values, **uncommon_values, **foil_values}
+
+    def assign_probabilities(self, card_list):
+        """
+        Assign probabilities to a given card list.
+        
+        Parameters:
+        - card_list (list): List of cards to assign probabilities to.
+        
+        Returns:
+        - dict: Dictionary with cards as keys and probabilities as values.
+        """
+        raw_probabilities = np.random.uniform(1, 10, size=len(card_list))
+        normalized_probabilities = raw_probabilities / np.sum(raw_probabilities)
+        return dict(zip(card_list, normalized_probabilities))
+    
+    def open_pack(self, pack_id):
+        """
+        Simulate opening a pack and calculate the total market value of the cards.
+        
+        Parameters:
+        - pack_id (int): Index of the pack to open.
+        
+        Returns:
+        - float: Total market value of the cards pulled from the pack.
+        """
+        if pack_id < 0 or pack_id >= self.num_packs:
+            raise ValueError("Invalid pack_id.")
+
+        pack = self.packs[pack_id]
+        total_value = 0
+
+        # Draw cards and calculate total value
+        total_value += self.draw_cards(pack["common_list"], pack["common_probabilities"], 4)
+        total_value += self.draw_cards(pack["uncommon_list"], pack["uncommon_probabilities"], 3)
+        total_value += self.draw_cards(pack["foil_list"], pack["foil_probabilities"], 3)
+        
+        return total_value
+
+    def draw_cards(self, card_list, probabilities, num_cards):
+        """
+        Simulate drawing cards from a list and calculate their total market value.
+        
+        Parameters:
+        - card_list (list): List of cards to draw from.
+        - probabilities (dict): Probabilities for each card.
+        - num_cards (int): Number of cards to draw.
+        
+        Returns:
+        - float: Total market value of the drawn cards.
+        """
+        cards = np.random.choice(card_list, size=num_cards, p=list(probabilities.values()))
+        return sum(self.market_values[card] for card in cards)
+
+class ThompsonSampling:
+    def __init__(self, packpool, num_trials=180):
+        """
+        Initialize Thompson Sampling with Dirichlet priors.
+        
+        Parameters:
+        - packpool (PACKPOOL): Instance of the PACKPOOL class.
+        - num_trials (int): Number of pack openings to simulate.
+        """
+        self.packpool = packpool
+        self.num_trials = num_trials
+        self.alphas = np.ones((packpool.num_packs, len(packpool.packs[0]["common_list"]) +
+                               len(packpool.packs[0]["uncommon_list"]) +
+                               len(packpool.packs[0]["foil_list"])))
+        self.regret = []
+        self.total_rewards = np.zeros(packpool.num_packs)
+        self.times_opened = np.zeros(packpool.num_packs, dtype=int)
+
+    def play_one_step(self):
+        """
+        Perform one step of Thompson Sampling:
+        - Sample pack means from Dirichlet prior.
+        - Open the pack with the highest sampled mean.
+        - Update the Dirichlet prior based on the observed rewards.
+        """
+        sampled_means = []
+        
+        for pack_id in range(self.packpool.num_packs):
+            # Sample from Dirichlet prior
+            sampled_means.append(np.random.dirichlet(self.alphas[pack_id]))
+
+        # Convert sampled means to total expected reward for each pack
+        expected_rewards = [sum(mean) for mean in sampled_means]
+        
+        # Choose the pack with the highest expected reward
+        chosen_pack = np.argmax(expected_rewards)
+        
+        # Simulate opening the chosen pack
+        reward = self.packpool.open_pack(chosen_pack)
+        self.total_rewards[chosen_pack] += reward
+        self.times_opened[chosen_pack] += 1
+
+        # Update the posterior distribution
+        # Normalize reward to fit within Dirichlet update range
+        normalized_reward = reward / max(self.packpool.market_values.values())
+        self.alphas[chosen_pack] += normalized_reward
+        
+        # Track regret
+        optimal_reward = max(
+            self.packpool.open_pack(i) for i in range(self.packpool.num_packs)
+        )
+        self.regret.append(optimal_reward - reward)
+
+    def run(self):
+        """
+        Execute Thompson Sampling for the specified number of trials.
+        
+        Returns:
+        - cumulative_regret (np.ndarray): Cumulative regret over the trials.
+        """
+        for _ in range(self.num_trials):
+            self.play_one_step()
+        
+        # Print final results for each pack
+        print("\nFinal Results:")
+        for pack_id in range(self.packpool.num_packs):
+            print(f"Pack {pack_id + 1}:")
+            print(f"  Total Value: {self.total_rewards[pack_id]:.2f}")
+            print(f"  Times Opened: {self.times_opened[pack_id]}")
+        
+        return np.cumsum(self.regret)
+
+
+# Example Usage
+packpool = PACKPOOL(num_packs=5)
+ts = ThompsonSampling(packpool, num_trials=180)
+cumulative_regret = ts.run()
+
+# Plot the cumulative regret
+import matplotlib.pyplot as plt
+plt.plot(cumulative_regret)
+plt.xlabel("Trials")
+plt.ylabel("Cumulative Regret")
+plt.title("Thompson Sampling with Dirichlet Priors")
+plt.show()
