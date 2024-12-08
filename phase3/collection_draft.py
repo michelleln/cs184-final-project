@@ -284,24 +284,26 @@ class ThompsonSampling:
         return np.cumsum(self.regret)
 
 class DefinedCollection:
-    def __init__(self, packpool, target):
+    def __init__(self, packpool, raw_target):
         self.packpool = packpool
-        self.target = target
+        self.target = {key: 0. for key in allcards}
 
-    def card_index(self, str_list):
-        cards_dict = {key: 0 for key in allcards}
-
-        for card in str_list:
-            if card in cards_dict.keys():
-                cards_dict[card] += 1
+        for card in raw_target:
+            if card in self.target.keys():
+                self.target[card] += 1
             else:
                 print(f"Warning: {card} does not exist.")
+        
+        self.gauge = np.array(list(self.target.values()))
 
+    def single_reward(self, card):
+        pass
 
-        return np.array(list(cards_dict.values()))
+    def play_one_step(self):
+        pass
     
     def run(self):
-        return self.card_index(target)
+        pass
 
 # packpool = PACKPOOL(num_packs=5)
 # ts = ThompsonSampling(packpool, num_trials=180)
@@ -313,4 +315,4 @@ target = input("Provide a list of desired cards: ")
 packpool = PACKPOOL(num_packs=9)
 target = np.array(target.split())
 collection = DefinedCollection(packpool, target)
-print(collection.run())
+collection.run()
