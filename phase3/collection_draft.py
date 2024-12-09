@@ -284,10 +284,11 @@ class ThompsonSampling:
         return np.cumsum(self.regret)
 
 class DefinedCollection:
-    def __init__(self, packpool, raw_target):
+    def __init__(self, packpool, raw_target, budget=1000, threshold=10, pack_cost=50):
         self.packpool = packpool
         self.target = {key: 0. for key in allcards}
 
+        # Convert target list into a dictionary with counts for each card
         for card in raw_target:
             if card in self.target.keys():
                 self.target[card] += 1
@@ -296,23 +297,101 @@ class DefinedCollection:
         
         self.gauge = np.array(list(self.target.values()))
 
+        # UCB-VI related values
+        self.num_packs = packpool.num_packs
+        self.pack_values = np.zeros(self.num_packs)  # Estimated values for each pack
+        self.pack_counts = np.zeros(self.num_packs)  # Number of times each pack has been opened
+        self.total_steps = 0  # Total steps taken
+
+        # Dynamic budget adjustment
+        self.budget = budget  # Initial budget
+        self.expanded_budget = 0  # Additional budget from high-value cards
+        self.threshold = threshold  # Value threshold for high-value cards
+        self.pack_cost = pack_cost # Cost of a single pack
+
     def single_reward(self, card):
-        pass
+        """
+        Compute reward for a single card.
+        - Full reward for cards in the target collection.
+        - Partial reward for high-value cards above a threshold.
+        """
+        if self.target[card] > 0:
+            return 1.0  # Full reward
+        elif self.packpool.market_values[card] > self.threshold:
+            return 0.1  # Partial reward
+        else:
+            return 0.0  # No reward
 
     def play_one_step(self):
-        pass
+        """
+        Execute one step of the UCB-VI algorithm:
+        - Select a pack based on the upper confidence bound.
+        - Open the pack, draw cards, and update values and counts.
+        """
+        # Compute UCB for each pack
+        if self.total_steps == 0:
+            ucb_values = np.inf * np.ones(self.num_packs)
+        else:
+            ucb_values = (
+                self.pack_values
+                + np.sqrt(2 * np.log(self.total_steps + 1) / (self.pack_counts + 1))
+            )
+        
+        # Select the pack with the highest UCB value
+        pack_id = np.argmax(ucb_values)
+        
+        # Open the pack and draw cards
+        drawn_cards = self.packpool.open_pack_list(pack_id)
+        
+        # Compute rewards
+        reward = 0
+        for card, count in zip(allcards, drawn_cards):
+            card_value = self.packpool.market_values[card]
+            reward += self.single_reward(card) * count
+            
+            # Expand budget for high-value cards above threshold
+            if card_value > self.threshold:
+                self.budget += card_value * count
+                self.expanded_budget += card_value * count
+
+        # Update pack values and counts
+        self.pack_counts[pack_id] += 1
+        step_size = 1 / self.pack_counts[pack_id]
+        self.pack_values[pack_id] += step_size * (reward - self.pack_values[pack_id])
+        
+        # Update the total steps
+        self.total_steps += 1
+        
+        # Update the target collection (reduce gauge for collected cards)
+        self.gauge -= np.minimum(drawn_cards, self.gauge)
     
     def run(self):
-        pass
+        """
+        Run the UCB-VI algorithm until the target collection is completed or the budget is exhausted.
+        """
+        while self.budget >= self.pack_cost:
+            if np.all(self.gauge <= 0):
+                print("Target collection completed!")
+                break
+            self.play_one_step()
+            self.budget -= self.pack_cost
+            print("step", self.total_steps, "complete")
+            print("budget at ", self.budget, "expect", self.budget/self.pack_cost, "pulls")
+
+        print("Final target status:", self.gauge)
+        print("Pack values:", self.pack_values)
+        print("Pack counts:", self.pack_counts)
+        print("Total packs pulled:", self.total_steps)
+        print("Expanded budget contributed:", self.expanded_budget)
 
 # packpool = PACKPOOL(num_packs=5)
 # ts = ThompsonSampling(packpool, num_trials=180)
 # cumulative_regret = ts.run()
 
-target = input("Provide a list of desired cards: ")
-# target = "toad toad toadFoil turtle turtle turtleFoil firedragon firedragon firedragonFoil"
+# target = input("Provide a list of desired cards: ")
+target = "toad toad toadFoil turtle turtle turtleFoil firedragon firedragon firedragonFoil"
 
 packpool = PACKPOOL(num_packs=9)
 target = np.array(target.split())
-collection = DefinedCollection(packpool, target)
+collection = DefinedCollection(packpool, target, 1000)
 collection.run()
