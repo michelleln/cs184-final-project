@@ -284,7 +284,7 @@ class ThompsonSampling:
         return np.cumsum(self.regret)
 
 class DefinedCollection:
-    def __init__(self, packpool, raw_target, budget=1000, threshold=10, pack_cost=50):
+    def __init__(self, packpool, raw_target, budget=1000, threshold=15, pack_cost=50):
         self.packpool = packpool
         self.target = {key: 0. for key in allcards}
 
@@ -304,6 +304,7 @@ class DefinedCollection:
         self.total_steps = 0  # Total steps taken
 
         # Dynamic budget adjustment
+        self.initial_budget = budget  # Initial budget
         self.budget = budget  # Initial budget
         self.expanded_budget = 0  # Additional budget from high-value cards
         self.threshold = threshold  # Value threshold for high-value cards
@@ -317,8 +318,10 @@ class DefinedCollection:
         """
         if self.target[card] > 0:
             return 1.0  # Full reward
-        elif self.packpool.market_values[card] > self.threshold:
+        elif (self.packpool.market_values[card] > self.threshold) & (self.budget < self.initial_budget):
             return 0.1  # Partial reward
+        elif (self.packpool.market_values[card] > self.threshold):
+            return -0.2  # Negative reward
         else:
             return 0.0  # No reward
 
