@@ -344,15 +344,17 @@ class DefinedCollection:
                 self.target[card] += 1
             else:
                 print(f"Warning: {card} does not exist.")
-        
-        self.gauge = np.array(list(self.target.values())) # List of cards still needed to be collected
-        self.collection = np.zeros_like(self.gauge) # Cards collected but not sold yet
 
         # UCB-VI related values
         self.num_packs = packpool.num_packs
         self.pack_values = np.zeros(self.num_packs)  # Estimated values for each pack
         self.pack_counts = np.zeros(self.num_packs)  # Number of times each pack has been opened
         self.total_steps = 0  # Total steps taken
+
+        self.gauge = np.array(list(self.target.values()))  # List of cards still needed to be collected
+        self.collection = np.zeros_like(self.gauge)  # Cards collected but not sold
+        self.pack_data = np.zeros([self.num_packs, len(allcards)]) # All cards collected so far, indexed by pack number
+
 
         # Dynamic budget adjustment
         self.initial_budget = budget  # Initial budget
@@ -392,10 +394,12 @@ class DefinedCollection:
             )
         
         # Select the pack with the highest UCB value
+        # TODO: use the random_argmax instead?
         pack_id = np.argmax(ucb_values)
         
         # Open the pack and draw cards
         drawn_cards = self.packpool.open_pack_list(pack_id)
+        self.pack_data[pack_id] += drawn_cards
         
         # Compute rewards
         reward = 0
@@ -441,6 +445,13 @@ class DefinedCollection:
         print("Total packs pulled:", self.total_steps)
         print("Expanded budget contributed:", self.expanded_budget)
 
+    def plot_pack_distributions(self):
+        # TODO: implement plotting of experimentally-determined pack distributions
+
+        # TODO: compare with actual pack distributions
+        pass
+
+
 # packpool = PACKPOOL(num_packs=5)
 # ts = ThompsonSampling(packpool, num_trials=180)
 # cumulative_regret = ts.run()
@@ -454,5 +465,5 @@ packpool = PACKPOOL(num_packs=5, pack_init="loop")
 target = np.array(target.split())
 maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
 #collection = DefinedCollection(packpool, target, budget=1000)
-collection = DefinedCollection(packpool, target, budget=10000, pack_cost=maxPackValue)
+collection = DefinedCollection(packpool, target, budget=5000, pack_cost=maxPackValue)
 collection.run()
