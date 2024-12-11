@@ -1,6 +1,9 @@
 import numpy as np
 import random
 
+random.seed(184)
+np.random.seed(184)
+
 cglobal_list = ["mushroom", "moth", "bramble", "mantis", "beetle", "pollenpuff", "crown", "goat", "fox", "horse", "magma", "anteater", "lizard", "centipede", "duck", 
                 "jellyfish", "seal", "clam", "crab", "seahorse", "goldfish", "swan", "cucumber", "triggerfish", "snowmoth", "ball", "electric", "jolt", "zebra", 
                 "frill", "urchin", "fairy", "slow", "mime", "model", "stamp", "golem", "pangolin", "mole", "ape", "boomerang", "kick", "punch", "drill", "martial", 
@@ -27,12 +30,13 @@ def random_argmax(a):
     return np.random.choice(np.where(a == a.max())[0])
 
 class PACKPOOL:
-    def __init__(self, num_packs=5):
+    def __init__(self, num_packs=5, pack_init="random"):
         """
         Initialize the PACKPOOL with a fixed number of packs and set market values for cards.
         
         Parameters:
         - num_packs (int): Number of packs in the pool.
+        - pack_init (str): Method to initialize pack distributions
         """
 
         self.num_packs = num_packs
@@ -40,25 +44,64 @@ class PACKPOOL:
         # Define fixed market values for all cards with constraints
         self.market_values = self.set_market_values()
 
-        # Initialize packs
-        self.packs = [
-            {
+        # Initialize packs completely randomly
+        if pack_init == "random":
+            self.packs = [
+                {
+                    "common_list": random.sample(cglobal_list, c_per_box),
+                    "uncommon_list": random.sample(uglobal_list, u_per_box),
+                    "foil_list": random.sample(fglobal_list, f_per_box),
+                    "common_probabilities": None,
+                    "uncommon_probabilities": None,
+                    "foil_probabilities": None
+                }
+                for _ in range(self.num_packs)
+            ]
 
-                "common_list": random.sample(cglobal_list, c_per_box),
-                "uncommon_list": random.sample(uglobal_list, u_per_box),
-                "foil_list": random.sample(fglobal_list, f_per_box),
-                "common_probabilities": None,
-                "uncommon_probabilities": None,
-                "foil_probabilities": None
-            }
-            for _ in range(self.num_packs)
-        ]
+        # Initilize packs by looping by simply looping through the card lists, to ensure all cards are in at least one pack
+        elif pack_init == "loop":
+            self.packs = []
+            for i in range(self.num_packs):
+                pack = {}
+
+                # Common list
+                start_idx = i % len(cglobal_list)
+                end_idx = (i * c_per_box) % len(cglobal_list)
+                if start_idx < end_idx:
+                    pack["common_list"] = cglobal_list[start_idx:end_idx]
+                else:
+                    pack["common_list"] = cglobal_list[start_idx:] + cglobal_list[:end_idx]
+
+                # Uncommon list
+                start_idx = i % len(uglobal_list)
+                end_idx = (i * c_per_box) % len(uglobal_list)
+                if start_idx < end_idx:
+                    pack["uncommon_list"] = uglobal_list[start_idx:end_idx]
+                else:
+                    pack["uncommon_list"] = uglobal_list[start_idx:] + uglobal_list[:end_idx]
+
+                # Foil list
+                start_idx = i % len(fglobal_list)
+                end_idx = (i * f_per_box) % len(fglobal_list)
+                if start_idx < end_idx:
+                    pack["foil_list"] = fglobal_list[start_idx:end_idx]
+                else:
+                    pack["foil_list"] = fglobal_list[start_idx:] + fglobal_list[:end_idx]
+
+                # Default probabilities
+                pack["common_probabilities"] = None
+                pack["uncommon_probabilities"] = None
+                pack["foil_probabilities"] = None
+
+                self.packs.append(pack)
 
         # Assign probabilities for each pack
         for pack in self.packs:
             pack["common_probabilities"] = self.assign_probabilities(pack["common_list"])
             pack["uncommon_probabilities"] = self.assign_probabilities(pack["uncommon_list"])
             pack["foil_probabilities"] = self.assign_probabilities(pack["foil_list"])
+
+        print(self.packs[0]) # TEST
 
         # Calculate expected values of packs (for regret analysis, but not "known" to agent)
         self.packEVs = []
@@ -285,6 +328,13 @@ class ThompsonSampling:
 
 class DefinedCollection:
     def __init__(self, packpool, raw_target, budget=1000, threshold=15, pack_cost=50):
+        """
+        packpool: PACKPOOL class instance
+        raw_target: string, desired cards written out separated by spaces
+        budget: int, budget for purchasing card packs
+        threshold: int, value above which a card is deemed worthy of selling
+        pack_cost: int, cost for each card pack opened
+        """
         self.packpool = packpool
         self.target = {key: 0. for key in allcards}
 
@@ -295,7 +345,8 @@ class DefinedCollection:
             else:
                 print(f"Warning: {card} does not exist.")
         
-        self.gauge = np.array(list(self.target.values()))
+        self.gauge = np.array(list(self.target.values())) # List of cards still needed to be collected
+        self.collection = np.zeros_like(self.gauge) # Cards collected but not sold yet
 
         # UCB-VI related values
         self.num_packs = packpool.num_packs
@@ -348,13 +399,14 @@ class DefinedCollection:
         
         # Compute rewards
         reward = 0
-        for card, count in zip(allcards, drawn_cards):
+        for i, (card, count) in enumerate(zip(allcards, drawn_cards)):
             card_value = self.packpool.market_values[card]
             reward += self.single_reward(card) * count
             
-            # Expand budget for high-value cards above threshold
-            if card_value > self.threshold:
+            # Sell cards to expand budget for high-value cards above threshold if they are no longer needed
+            if card_value > self.threshold and self.gauge[i] == 0:
                 self.budget += card_value * count
+                drawn_cards[i] -= count
                 self.expanded_budget += card_value * count
 
         # Update pack values and counts
@@ -367,6 +419,7 @@ class DefinedCollection:
         
         # Update the target collection (reduce gauge for collected cards)
         self.gauge -= np.minimum(drawn_cards, self.gauge)
+        self.collection += drawn_cards
     
     def run(self):
         """
@@ -382,6 +435,7 @@ class DefinedCollection:
             print("budget at ", self.budget, "expect", self.budget/self.pack_cost, "pulls")
 
         print("Final target status:", self.gauge)
+        print("Final collection status:", self.collection)
         print("Pack values:", self.pack_values)
         print("Pack counts:", self.pack_counts)
         print("Total packs pulled:", self.total_steps)
@@ -392,9 +446,13 @@ class DefinedCollection:
 # cumulative_regret = ts.run()
 
 # target = input("Provide a list of desired cards: ")
-target = "toad toad toadFoil turtle turtle turtleFoil firedragon firedragon firedragonFoil"
+#target = "toad toad toadFoil turtle turtle turtleFoil firedragon firedragon firedragonFoil"
+target = "mushroom mushroom toadFoil turtle turtle turtleFoil firedragon firedragon originFoil"
 
-packpool = PACKPOOL(num_packs=9)
+#packpool = PACKPOOL(num_packs=9)
+packpool = PACKPOOL(num_packs=5, pack_init="loop")
 target = np.array(target.split())
-collection = DefinedCollection(packpool, target, 1000)
+maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
+#collection = DefinedCollection(packpool, target, budget=1000)
+collection = DefinedCollection(packpool, target, budget=10000, pack_cost=maxPackValue)
 collection.run()
