@@ -556,7 +556,6 @@ class DefinedCollection:
 #packpool = PACKPOOL(num_packs=9)
 
 # TEST CASE 1:
-"""
 packpool = PACKPOOL(num_packs=5, pack_init="loop")
 target = "mushroom mushroom toadFoil turtle turtle turtleFoil firedragon firedragon originFoil"
 target = np.array(target.split())
@@ -565,24 +564,22 @@ maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to
 collection = DefinedCollection(packpool, target, budget=5000, pack_cost=maxPackValue)
 collection.run()
 collection.plot_pack_distributions()
-"""
+
 
 # TEST CASE 2: Only interested in collecting many of one card
-packpool = PACKPOOL(num_packs=5, pack_init="loop")
-target = "originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil"
-target = np.array(target.split())
-maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
-collection = DefinedCollection(packpool, target, budget=10000, pack_cost=maxPackValue)
-collection.run()
-collection.plot_pack_distributions()
+# packpool = PACKPOOL(num_packs=5, pack_init="loop")
+# target = "originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil"
+# target = np.array(target.split())
+# maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
+# collection = DefinedCollection(packpool, target, budget=10000, pack_cost=maxPackValue)
+# collection.run()
+# collection.plot_pack_distributions()
 
 # TEST CASE 3: Try to collect at least one of every single card ("completionist")
-""""
-packpool = PACKPOOL(num_packs=5, pack_init="loop")
-target = "originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil"
-target = np.array(target.split())
-maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
-collection = DefinedCollection(packpool, target, budget=5000, pack_cost=maxPackValue)
-collection.run()
-collection.plot_pack_distributions()
-"""
+# packpool = PACKPOOL(num_packs=5, pack_init="loop")
+# target = "mushroom moth bramble mantis beetle pollenpuff crown goat fox horse magma anteater lizard centipede duck jellyfish seal clam crab seahorse goldfish swan cucumber triggerfish snowmoth ball electric jolt zebra frill urchin fairy slow mime model stamp golem pangolin mole ape boomerang kick punch drill martial octopus snake bat maw blades rat sparrow cat leek trio tongue egg bull data chinchilla sheep toad butterfly bee flower pitcher tree firedragon dog flare firebird turtle frog starfish carp nessie vapor nautilus icebird ninja mouse magnet zapbird eel spoons ghost hypnosis experiment lady wrestler boulder rocksnake horseshoe queen king sludge gas boltnut dragon pidgeon song parent mimic pterodactyl bear toadFoil treeFoil firedragonFoil dogFoil firebirdFoil turtleFoil starfishFoil icebirdFoil mouseFoil zapbirdFoil ghostFoil experimentFoil wrestlerFoil boomerangFoil songFoil originFoil"
+# target = np.array(target.split())
+# maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
+# collection = DefinedCollection(packpool, target, budget=5000, pack_cost=maxPackValue)
+# collection.run()
+# collection.plot_pack_distributions()
