@@ -1,8 +1,10 @@
 import numpy as np
+import matplotlib.pyplot as plt
 import random
+from scipy.stats import beta
 
 random.seed(184)
-np.random.seed(184)
+np.random.seed(184) # Apparently this also seeds scipy.stats
 
 cglobal_list = ["mushroom", "moth", "bramble", "mantis", "beetle", "pollenpuff", "crown", "goat", "fox", "horse", "magma", "anteater", "lizard", "centipede", "duck", 
                 "jellyfish", "seal", "clam", "crab", "seahorse", "goldfish", "swan", "cucumber", "triggerfish", "snowmoth", "ball", "electric", "jolt", "zebra", 
@@ -101,8 +103,6 @@ class PACKPOOL:
             pack["uncommon_probabilities"] = self.assign_probabilities(pack["uncommon_list"])
             pack["foil_probabilities"] = self.assign_probabilities(pack["foil_list"])
 
-        print(self.packs[0]) # TEST
-
         # Calculate expected values of packs (for regret analysis, but not "known" to agent)
         self.packEVs = []
         for pack in self.packs:
@@ -119,6 +119,21 @@ class PACKPOOL:
         """
         card_keys = list(self.market_values.keys())
         return {card_keys[n]: card_nums[n] for n in range(len(card_keys))}
+
+    def fillOutDict(self, partial_dict):
+        """
+        Parameters:
+            partial_dict: dict with cards as key values, with possibly not all cards represented, e.g. as in pack["common_list"]
+
+        Returns:
+            complete_dict: dict with the same card numbers as partial_dict, but with all cards represented as keys
+        """
+        full_dict = {key: 0 for key in allcards}
+        for card in list(partial_dict.keys()):
+            full_dict[card] = partial_dict[card]
+
+        return full_dict
+
 
     def set_market_values(self):
         """
@@ -345,7 +360,9 @@ class DefinedCollection:
             else:
                 print(f"Warning: {card} does not exist.")
 
-        # UCB-VI related values
+        # UCB related values
+        self.c = 0.1 # Hyperparameter describing how much weight to give UCB reward bonus
+        self.delta = 0.95 # Hyperparameter describing confidence level for UCB
         self.num_packs = packpool.num_packs
         self.pack_values = np.zeros(self.num_packs)  # Estimated values for each pack
         self.pack_counts = np.zeros(self.num_packs)  # Number of times each pack has been opened
@@ -354,6 +371,7 @@ class DefinedCollection:
         self.gauge = np.array(list(self.target.values()))  # List of cards still needed to be collected
         self.collection = np.zeros_like(self.gauge)  # Cards collected but not sold
         self.pack_data = np.zeros([self.num_packs, len(allcards)]) # All cards collected so far, indexed by pack number
+        self.alphas = np.ones([self.num_packs, len(allcards)]) # Dirichlet priors on the pack distributions
 
 
         # Dynamic budget adjustment
@@ -366,25 +384,44 @@ class DefinedCollection:
     def single_reward(self, card):
         """
         Compute reward for a single card.
-        - Full reward for cards in the target collection.
+        - Full reward for cards in the target collection that haven't been collected yet
         - Partial reward for high-value cards above a threshold.
         """
-        if self.target[card] > 0:
+        gaugeDict = self.packpool.cardListToDict(self.gauge)
+        if gaugeDict[card] > 0:
             return 1.0  # Full reward
         elif (self.packpool.market_values[card] > self.threshold) & (self.budget < self.initial_budget):
             return 0.1  # Partial reward
-        elif (self.packpool.market_values[card] > self.threshold):
-            return -0.2  # Negative reward
         else:
             return 0.0  # No reward
 
+
     def play_one_step(self):
         """
-        Execute one step of the UCB-VI algorithm:
+        Execute one step of the algorithm:
         - Select a pack based on the upper confidence bound.
         - Open the pack, draw cards, and update values and counts.
         """
-        # Compute UCB for each pack
+        # Estimate "baseline" reward for each pack
+        card_rewards = np.zeros(len(allcards))
+        for i, card in enumerate(allcards):
+            card_rewards[i] = self.single_reward(card)
+
+        pack_rewards = np.zeros(self.num_packs)
+        card_means = np.zeros([self.num_packs, len(allcards)])
+        for i in range(self.num_packs):
+            # Expectation value of multinomial with Dirichlet prior
+            # TODO: check this works as expected.
+            # TODO: separate out probabilities of common/uncommon/foil cards, since we've made that distinction...
+            card_means[i] = (c_per_box + u_per_box + f_per_box) * self.alphas[i] / np.sum(self.alphas[i])
+
+            # TODO: This doesn't account for case where e.g. draw 2 cards but only 1 was in target hand
+            pack_rewards[i] = np.dot(card_rewards, card_means[i])
+
+        # Compute reward bonus for each pack
+
+
+        """
         if self.total_steps == 0:
             ucb_values = np.inf * np.ones(self.num_packs)
         else:
@@ -392,14 +429,18 @@ class DefinedCollection:
                 self.pack_values
                 + np.sqrt(2 * np.log(self.total_steps + 1) / (self.pack_counts + 1))
             )
+        """
         
-        # Select the pack with the highest UCB value
-        # TODO: use the random_argmax instead?
-        pack_id = np.argmax(ucb_values)
+        # Select the pack with the highest value given the state-dependent reward bonus
+        # TODO: Add reward bonus to the pack_rewards
+        pack_id = random_argmax(pack_rewards)
         
         # Open the pack and draw cards
         drawn_cards = self.packpool.open_pack_list(pack_id)
+
+        # Update data and priors on drawn pack
         self.pack_data[pack_id] += drawn_cards
+        self.alphas[pack_id] += drawn_cards
         
         # Compute rewards
         reward = 0
@@ -427,7 +468,7 @@ class DefinedCollection:
     
     def run(self):
         """
-        Run the UCB-VI algorithm until the target collection is completed or the budget is exhausted.
+        Run the state-dependent reward bonus algorithm until the target collection is completed or the budget is exhausted.
         """
         while self.budget >= self.pack_cost:
             if np.all(self.gauge <= 0):
@@ -443,14 +484,67 @@ class DefinedCollection:
         print("Pack values:", self.pack_values)
         print("Pack counts:", self.pack_counts)
         print("Total packs pulled:", self.total_steps)
+        print("Cards still missing:", sum(self.gauge))
         print("Expanded budget contributed:", self.expanded_budget)
 
-    def plot_pack_distributions(self):
-        # TODO: implement plotting of experimentally-determined pack distributions
-
-        # TODO: compare with actual pack distributions
+    # TODO: write function to calculate our how accurate our knowledge of the pack distributions is (use KL-divergence)
+    def pack_distribution_distance(self):
         pass
 
+
+    def plot_pack_distributions(self):
+        fig, axes = plt.subplots(2, self.num_packs, figsize=(20, 4))
+        axes = axes.ravel()  # Flatten the 2D array into a 1D array for iteration
+
+        # Plot the experimentally-determined pack distributions
+        expt_probs = np.zeros_like(self.pack_data)
+        for i in range(np.shape(self.pack_data)[0]):
+            # Exception if pack was never pulled (zero data)
+            if self.pack_counts[i] != 0:
+                expt_probs[i] = self.pack_data[i] / np.sum(self.pack_data[i])
+            else:
+                expt_probs[i] = self.pack_data[i]
+        ymax = np.max(expt_probs)
+
+        #for i, (ax, data) in enumerate(zip(axes, self.pack_data)):
+        for i, (ax, data) in enumerate(zip(axes, expt_probs)):
+            packDict = self.packpool.cardListToDict(data)
+
+            keys = list(packDict.keys())
+            values = list(packDict.values())
+            ax.bar(keys, values, width=0.8, edgecolor="black")
+            ax.set_title(f"Experiment, Pack {i + 1}")
+            ax.set_xlabel("Cards")
+            ax.set_xticks([])
+            ax.set_ylim(bottom=0, top=ymax)
+            ax.set_ylabel("Probabilities")
+
+        # Plot the actual pack distributions below
+        ymax = 0
+        for pack in self.packpool.packs:
+            pack_probs = {**pack["common_probabilities"], **pack["uncommon_probabilities"], **pack["foil_probabilities"]}
+            ymax = max(ymax, max(list(pack_probs.values())))
+
+        for i, (ax, pack) in enumerate(zip(axes[self.num_packs:], self.packpool.packs)):
+            pack_probs = {**pack["common_probabilities"], **pack["uncommon_probabilities"], **pack["foil_probabilities"]}
+            full_pack_probs = self.packpool.fillOutDict(pack_probs)
+
+            keys = list(packDict.keys())
+            values = list(full_pack_probs.values())
+
+            ax.bar(keys, values, width=0.8, edgecolor="black")
+            ax.set_title(f"Actual, Pack {i + 1}")
+            ax.set_xlabel("Cards")
+            ax.set_xticks([])
+            ax.set_ylim(bottom=0, top=ymax)
+            ax.set_ylabel("Probabilities")
+
+        plt.show()
+        pass
+
+    # TODO: plot the KL-divergence as a function of packs opened
+    def plot_distribution_distance(self):
+        pass
 
 # packpool = PACKPOOL(num_packs=5)
 # ts = ThompsonSampling(packpool, num_trials=180)
@@ -458,12 +552,37 @@ class DefinedCollection:
 
 # target = input("Provide a list of desired cards: ")
 #target = "toad toad toadFoil turtle turtle turtleFoil firedragon firedragon firedragonFoil"
-target = "mushroom mushroom toadFoil turtle turtle turtleFoil firedragon firedragon originFoil"
 
 #packpool = PACKPOOL(num_packs=9)
+
+# TEST CASE 1:
+"""
 packpool = PACKPOOL(num_packs=5, pack_init="loop")
+target = "mushroom mushroom toadFoil turtle turtle turtleFoil firedragon firedragon originFoil"
 target = np.array(target.split())
 maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
 #collection = DefinedCollection(packpool, target, budget=1000)
 collection = DefinedCollection(packpool, target, budget=5000, pack_cost=maxPackValue)
 collection.run()
+collection.plot_pack_distributions()
+"""
+
+# TEST CASE 2: Only interested in collecting many of one card
+packpool = PACKPOOL(num_packs=5, pack_init="loop")
+target = "originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil"
+target = np.array(target.split())
+maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
+collection = DefinedCollection(packpool, target, budget=10000, pack_cost=maxPackValue)
+collection.run()
+collection.plot_pack_distributions()
+
+# TEST CASE 3: Try to collect at least one of every single card ("completionist")
+""""
+packpool = PACKPOOL(num_packs=5, pack_init="loop")
+target = "originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil"
+target = np.array(target.split())
+maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
+collection = DefinedCollection(packpool, target, budget=5000, pack_cost=maxPackValue)
+collection.run()
+collection.plot_pack_distributions()
+"""
