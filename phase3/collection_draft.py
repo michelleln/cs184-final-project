@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import random
 from scipy.stats import beta
 from scipy.special import psi
+import copy
 
 random.seed(184)
 np.random.seed(184) # Apparently this also seeds scipy.stats
@@ -343,13 +344,14 @@ class ThompsonSampling:
         return np.cumsum(self.regret)
 
 class DefinedCollection:
-    def __init__(self, packpool, raw_target, budget=1000, threshold=15, pack_cost=50):
+    def __init__(self, packpool, raw_target, budget=1000, threshold=15, pack_cost=50, C=20.0):
         """
         packpool: PACKPOOL class instance
         raw_target: string, desired cards written out separated by spaces
         budget: int, budget for purchasing card packs
         threshold: int, value above which a card is deemed worthy of selling
         pack_cost: int, cost for each card pack opened
+        C: float, reward bonus for exploration
         """
         self.packpool = packpool
         self.target = {key: 0. for key in allcards}
@@ -362,7 +364,7 @@ class DefinedCollection:
                 print(f"Warning: {card} does not exist.")
 
         # UCB related values
-        self.c = 20.0 # Hyperparameter describing how much weight to give UCB reward bonus
+        self.c = C # Hyperparameter describing how much weight to give UCB reward bonus
         self.delta = 0.95 # Hyperparameter describing confidence level for UCB
         self.num_packs = packpool.num_packs
         self.pack_values = np.zeros(self.num_packs)  # Estimated values for each pack
@@ -441,9 +443,10 @@ class DefinedCollection:
         self.pack_data[pack_id] += drawn_cards
         self.alphas[pack_id] += drawn_cards
 
-        self.KLdivs.append(self.KLdivs[self.total_steps]) # Copy last set of KLdivs
+        #self.KLdivs.append(self.KLdivs[self.total_steps]) # Copy last set of KLdivs
+        self.KLdivs.append(copy.deepcopy(self.KLdivs[self.total_steps]))  # Deep copy the last set of KLdivs
         self.KLdivs[self.total_steps+1][pack_id] = self.pack_distribution_distance(pack_id) # Update KLdivs for drawn pack
-        print(self.KLdivs[self.total_steps])  # TEST
+        print(self.KLdivs[self.total_steps+1][pack_id] == self.KLdivs[self.total_steps][pack_id])  # TEST
 
         # Compute rewards
         reward = 0
@@ -509,19 +512,27 @@ class DefinedCollection:
         p = np.array(list((self.packpool.fillOutDict(pack_probs)).values())) # "True" probabilities
 
         alpha = self.alphas[pack_ind, :]
-        S = np.sum(alpha)  # Sum of Dirichlet parameters
-        digamma_alpha = psi(alpha)  # Digamma of individual alphas
-        digamma_S = psi(S)  # Digamma of the sum of alphas
+        alpha_norm = alpha / np.sum(alpha)  # Sum of Dirichlet parameters
+        #digamma_alpha = psi(alpha)  # Digamma of individual alphas
+        #digamma_S = psi(S)  # Digamma of the sum of alphas
 
         # Mask terms where p == 0
+        """
         valid_indices = p > 0
         alpha_valid = alpha[valid_indices]
         p_valid = p[valid_indices]
+        """
 
         # Compute KL divergence
+        """
         kl_div = np.sum((digamma_alpha[valid_indices] - digamma_S) * alpha_valid) - np.sum(alpha_valid * np.log(p_valid))
         return kl_div
+        """
 
+        # Compute other distance metric
+        # TODO: change all the comments to reflect this...
+        d = np.sum((alpha_norm - p) ** 2)
+        return d
 
     def plot_pack_distributions(self):
         fig, axes = plt.subplots(2, self.num_packs, figsize=(16, 8))
@@ -591,7 +602,7 @@ class DefinedCollection:
             plt.plot(KLdivs[:, i], label=f"Pack {i + 1}")  # Optionally add labels
 
         # Add labels, legend, and grid
-        plt.title("KL-divergences during pack openings", fontsize=14)
+        plt.title("Statistical distances during pack openings", fontsize=14)
         plt.xlabel("Timestep", fontsize=12)
         plt.grid(True)
         plt.legend(loc="best", fontsize=10)
@@ -618,8 +629,7 @@ collection.run()
 collection.plot_pack_distributions()
 collection.plot_distribution_distance()
 """
-
-# TEST CASE 2: Try to collect at least one of every single card ("completionist")
+# TEST CASE 2: Only interested in collecting many of one card
 packpool = PACKPOOL(num_packs=5, pack_init="loop")
 target = "originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil"
 target = target + " " + target + " " + target
@@ -630,7 +640,8 @@ collection.run()
 collection.plot_pack_distributions()
 collection.plot_distribution_distance()
 
-# TEST CASE 3: Only interested in collecting many of one card
+# TEST CASE 3: Try to collect at least one of every single card ("completionist")
+
 """
 packpool = PACKPOOL(num_packs=5, pack_init="loop")
 # target = "mushroom moth bramble mantis beetle pollenpuff crown goat fox horse magma anteater lizard centipede duck jellyfish seal clam crab seahorse goldfish swan cucumber triggerfish snowmoth ball electric jolt zebra frill urchin fairy slow mime model stamp golem pangolin mole ape boomerang kick punch drill martial octopus snake bat maw blades rat sparrow cat leek trio tongue egg bull data chinchilla sheep toad butterfly bee flower pitcher tree firedragon dog flare firebird turtle frog starfish carp nessie vapor nautilus icebird ninja mouse magnet zapbird eel spoons ghost hypnosis experiment lady wrestler boulder rocksnake horseshoe queen king sludge gas boltnut dragon pidgeon song parent mimic pterodactyl bear toadFoil treeFoil firedragonFoil dogFoil firebirdFoil turtleFoil starfishFoil icebirdFoil mouseFoil zapbirdFoil ghostFoil experimentFoil wrestlerFoil boomerangFoil songFoil originFoil"maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
