@@ -5,8 +5,8 @@ from scipy.stats import beta
 from scipy.special import psi
 import copy
 
-random.seed(184)
-np.random.seed(184) # Apparently this also seeds scipy.stats
+random.seed(1884)
+np.random.seed(1884) # Apparently this also seeds scipy.stats
 
 cglobal_list = ["mushroom", "moth", "bramble", "mantis", "beetle", "pollenpuff", "crown", "goat", "fox", "horse", "magma", "anteater", "lizard", "centipede", "duck", 
                 "jellyfish", "seal", "clam", "crab", "seahorse", "goldfish", "swan", "cucumber", "triggerfish", "snowmoth", "ball", "electric", "jolt", "zebra", 
@@ -145,14 +145,14 @@ class PACKPOOL:
 
 
         # Assign probabilities for each pack
-        for pack in self.packs:
+        for i, pack in enumerate(self.packs):
             pack["common_probabilities"] = self.assign_probabilities(pack["common_list"])
             pack["uncommon_probabilities"] = self.assign_probabilities(pack["uncommon_list"])
             pack["foil_probabilities"] = self.assign_probabilities(pack["foil_list"])
 
-            if pack_init == "rare":
-                pack["foil_probabilities"]["toadFoil"] = 0.95
-                pack["foil_probabilities"]["originFoil"] = 0.05
+            if pack_init == "rare" and i == 1:
+                pack["foil_probabilities"]["toadFoil"] = 0.97
+                pack["foil_probabilities"]["originFoil"] = 0.03
 
 
         # Calculate expected values of packs (for regret analysis, but not "known" to agent)
