@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 from scipy.stats import beta
+from scipy.special import psi
 
 random.seed(184)
 np.random.seed(184) # Apparently this also seeds scipy.stats
@@ -361,18 +362,21 @@ class DefinedCollection:
                 print(f"Warning: {card} does not exist.")
 
         # UCB related values
-        self.c = 0.1 # Hyperparameter describing how much weight to give UCB reward bonus
+        self.c = 20.0 # Hyperparameter describing how much weight to give UCB reward bonus
         self.delta = 0.95 # Hyperparameter describing confidence level for UCB
         self.num_packs = packpool.num_packs
         self.pack_values = np.zeros(self.num_packs)  # Estimated values for each pack
         self.pack_counts = np.zeros(self.num_packs)  # Number of times each pack has been opened
         self.total_steps = 0  # Total steps taken
 
+        # Tracking pack learning
         self.gauge = np.array(list(self.target.values()))  # List of cards still needed to be collected
         self.collection = np.zeros_like(self.gauge)  # Cards collected but not sold
         self.pack_data = np.zeros([self.num_packs, len(allcards)]) # All cards collected so far, indexed by pack number
         self.alphas = np.ones([self.num_packs, len(allcards)]) # Dirichlet priors on the pack distributions
 
+        self.KLdivs = [] # Can't pre-allocate space as runtime isn't pre-determined
+        self.KLdivs.append([self.pack_distribution_distance(pack_ind) for pack_ind in range(self.num_packs)])
 
         # Dynamic budget adjustment
         self.initial_budget = budget  # Initial budget
@@ -419,20 +423,15 @@ class DefinedCollection:
             pack_rewards[i] = np.dot(card_rewards, card_means[i])
 
         # Compute reward bonus for each pack
+        most_needed_card = np.argmax(self.gauge) # Tie-breaking not really essential here...
 
+        most_needed_alphas = self.alphas[:, most_needed_card] # Extract the relevant alphas and betas for all packs at once
+        most_needed_betas = np.sum(self.alphas, axis=1) - most_needed_alphas
+        upper_bounds = beta.ppf(self.delta, most_needed_alphas, most_needed_betas)
 
-        """
-        if self.total_steps == 0:
-            ucb_values = np.inf * np.ones(self.num_packs)
-        else:
-            ucb_values = (
-                self.pack_values
-                + np.sqrt(2 * np.log(self.total_steps + 1) / (self.pack_counts + 1))
-            )
-        """
-        
+        pack_rewards += self.c * upper_bounds # Note that upper-bounds is bounded by 1, since it's a prior for a probability
+
         # Select the pack with the highest value given the state-dependent reward bonus
-        # TODO: Add reward bonus to the pack_rewards
         pack_id = random_argmax(pack_rewards)
         
         # Open the pack and draw cards
@@ -441,7 +440,11 @@ class DefinedCollection:
         # Update data and priors on drawn pack
         self.pack_data[pack_id] += drawn_cards
         self.alphas[pack_id] += drawn_cards
-        
+
+        self.KLdivs.append(self.KLdivs[self.total_steps]) # Copy last set of KLdivs
+        self.KLdivs[self.total_steps+1][pack_id] = self.pack_distribution_distance(pack_id) # Update KLdivs for drawn pack
+        print(self.KLdivs[self.total_steps])  # TEST
+
         # Compute rewards
         reward = 0
         for i, (card, count) in enumerate(zip(allcards, drawn_cards)):
@@ -487,13 +490,41 @@ class DefinedCollection:
         print("Cards still missing:", sum(self.gauge))
         print("Expanded budget contributed:", self.expanded_budget)
 
-    # TODO: write function to calculate our how accurate our knowledge of the pack distributions is (use KL-divergence)
-    def pack_distribution_distance(self):
-        pass
+    # TODO: double-check correctness
+    def pack_distribution_distance(self, pack_ind):
+        """
+            Compute the KL divergence between a Dirichlet prior and a true multinomial distribution.
+            Only does this for one pack at a time (only run it on a pack after that pack is opened and its priors are updated)
+
+            Parameters:
+            alpha: numpy array of Dirichlet parameters (concentration parameters).
+            p: numpy array of true probabilities for the multinomial distribution.
+
+            Returns:
+            kl_div: KL divergence value.
+            """
+
+        pack = self.packpool.packs[pack_ind]
+        pack_probs = {**pack["common_probabilities"], **pack["uncommon_probabilities"], **pack["foil_probabilities"]}
+        p = np.array(list((self.packpool.fillOutDict(pack_probs)).values())) # "True" probabilities
+
+        alpha = self.alphas[pack_ind, :]
+        S = np.sum(alpha)  # Sum of Dirichlet parameters
+        digamma_alpha = psi(alpha)  # Digamma of individual alphas
+        digamma_S = psi(S)  # Digamma of the sum of alphas
+
+        # Mask terms where p == 0
+        valid_indices = p > 0
+        alpha_valid = alpha[valid_indices]
+        p_valid = p[valid_indices]
+
+        # Compute KL divergence
+        kl_div = np.sum((digamma_alpha[valid_indices] - digamma_S) * alpha_valid) - np.sum(alpha_valid * np.log(p_valid))
+        return kl_div
 
 
     def plot_pack_distributions(self):
-        fig, axes = plt.subplots(2, self.num_packs, figsize=(20, 4))
+        fig, axes = plt.subplots(2, self.num_packs, figsize=(16, 8))
         axes = axes.ravel()  # Flatten the 2D array into a 1D array for iteration
 
         # Plot the experimentally-determined pack distributions
@@ -517,7 +548,10 @@ class DefinedCollection:
             ax.set_xlabel("Cards")
             ax.set_xticks([])
             ax.set_ylim(bottom=0, top=ymax)
-            ax.set_ylabel("Probabilities")
+            if i == 0:
+                ax.set_ylabel("Probabilities")
+            else:
+                ax.set_yticks([])
 
         # Plot the actual pack distributions below
         ymax = 0
@@ -537,14 +571,31 @@ class DefinedCollection:
             ax.set_xlabel("Cards")
             ax.set_xticks([])
             ax.set_ylim(bottom=0, top=ymax)
-            ax.set_ylabel("Probabilities")
+            if i == 0:
+                ax.set_ylabel("Probabilities")
+            else:
+                ax.set_yticks([])
 
         plt.show()
         pass
 
-    # TODO: plot the KL-divergence as a function of packs opened
+    # Plot the KL-divergence as a function of packs opened
     def plot_distribution_distance(self):
-        pass
+        # Note: KLdivs dimensions are (total_steps) * (num_packs)
+        KLdivs = np.array(self.KLdivs)
+        N = KLdivs.shape[1]
+
+        # Plot all curves
+        plt.figure(figsize=(8, 8))
+        for i in range(N):
+            plt.plot(KLdivs[:, i], label=f"Pack {i + 1}")  # Optionally add labels
+
+        # Add labels, legend, and grid
+        plt.title("KL-divergences during pack openings", fontsize=14)
+        plt.xlabel("Timestep", fontsize=12)
+        plt.grid(True)
+        plt.legend(loc="best", fontsize=10)
+        plt.show()
 
 # packpool = PACKPOOL(num_packs=5)
 # ts = ThompsonSampling(packpool, num_trials=180)
@@ -556,6 +607,7 @@ class DefinedCollection:
 #packpool = PACKPOOL(num_packs=9)
 
 # TEST CASE 1:
+"""
 packpool = PACKPOOL(num_packs=5, pack_init="loop")
 target = "mushroom mushroom toadFoil turtle turtle turtleFoil firedragon firedragon originFoil"
 target = np.array(target.split())
@@ -564,22 +616,27 @@ maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to
 collection = DefinedCollection(packpool, target, budget=5000, pack_cost=maxPackValue)
 collection.run()
 collection.plot_pack_distributions()
+collection.plot_distribution_distance()
+"""
 
+# TEST CASE 2: Try to collect at least one of every single card ("completionist")
+packpool = PACKPOOL(num_packs=5, pack_init="loop")
+target = "originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil"
+target = target + " " + target + " " + target
+target = np.array(target.split())
+maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
+collection = DefinedCollection(packpool, target, budget=50000, pack_cost=maxPackValue)
+collection.run()
+collection.plot_pack_distributions()
+collection.plot_distribution_distance()
 
-# TEST CASE 2: Only interested in collecting many of one card
-# packpool = PACKPOOL(num_packs=5, pack_init="loop")
-# target = "originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil originFoil"
-# target = np.array(target.split())
-# maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
-# collection = DefinedCollection(packpool, target, budget=10000, pack_cost=maxPackValue)
-# collection.run()
-# collection.plot_pack_distributions()
+# TEST CASE 3: Only interested in collecting many of one card
+"""
+packpool = PACKPOOL(num_packs=5, pack_init="loop")
+# target = "mushroom moth bramble mantis beetle pollenpuff crown goat fox horse magma anteater lizard centipede duck jellyfish seal clam crab seahorse goldfish swan cucumber triggerfish snowmoth ball electric jolt zebra frill urchin fairy slow mime model stamp golem pangolin mole ape boomerang kick punch drill martial octopus snake bat maw blades rat sparrow cat leek trio tongue egg bull data chinchilla sheep toad butterfly bee flower pitcher tree firedragon dog flare firebird turtle frog starfish carp nessie vapor nautilus icebird ninja mouse magnet zapbird eel spoons ghost hypnosis experiment lady wrestler boulder rocksnake horseshoe queen king sludge gas boltnut dragon pidgeon song parent mimic pterodactyl bear toadFoil treeFoil firedragonFoil dogFoil firebirdFoil turtleFoil starfishFoil icebirdFoil mouseFoil zapbirdFoil ghostFoil experimentFoil wrestlerFoil boomerangFoil songFoil originFoil"maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
+collection = DefinedCollection(packpool, target, budget=10000, pack_cost=maxPackValue)
+collection.run()
+collection.plot_pack_distributions()
+collection.plot_distribution_distance()
 
-# TEST CASE 3: Try to collect at least one of every single card ("completionist")
-# packpool = PACKPOOL(num_packs=5, pack_init="loop")
-# target = "mushroom moth bramble mantis beetle pollenpuff crown goat fox horse magma anteater lizard centipede duck jellyfish seal clam crab seahorse goldfish swan cucumber triggerfish snowmoth ball electric jolt zebra frill urchin fairy slow mime model stamp golem pangolin mole ape boomerang kick punch drill martial octopus snake bat maw blades rat sparrow cat leek trio tongue egg bull data chinchilla sheep toad butterfly bee flower pitcher tree firedragon dog flare firebird turtle frog starfish carp nessie vapor nautilus icebird ninja mouse magnet zapbird eel spoons ghost hypnosis experiment lady wrestler boulder rocksnake horseshoe queen king sludge gas boltnut dragon pidgeon song parent mimic pterodactyl bear toadFoil treeFoil firedragonFoil dogFoil firebirdFoil turtleFoil starfishFoil icebirdFoil mouseFoil zapbirdFoil ghostFoil experimentFoil wrestlerFoil boomerangFoil songFoil originFoil"
-# target = np.array(target.split())
-# maxPackValue = 5 * c_per_box + 10 * u_per_box + 20 * f_per_box # Set box cost to be less than this for guaranteed finite MDP
-# collection = DefinedCollection(packpool, target, budget=5000, pack_cost=maxPackValue)
-# collection.run()
-# collection.plot_pack_distributions()
+"""
