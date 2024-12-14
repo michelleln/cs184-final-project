@@ -5,6 +5,9 @@ import torch.optim as optim
 from torch.distributions import Categorical
 
 class PolicyNetwork(nn.Module):
+    """This neural network maps states to action probabilities. It is used to sample
+    actions during trajectory collection and is updated via the PPO objective to learn 
+    the optimal policy."""
     def __init__(self, state_dim, action_dim):
         super().__init__()
         self.network = nn.Sequential(
@@ -24,6 +27,8 @@ class PolicyNetwork(nn.Module):
         return self.network(x)
 
 class ValueNetwork(nn.Module):
+    """This neural network estimates the expected return (value) from each state. It
+    is used as a baseline in calculating advantages"""
     def __init__(self, state_dim):
         super().__init__()
         self.network = nn.Sequential(
@@ -40,6 +45,7 @@ class ValueNetwork(nn.Module):
         if len(x.shape) == 1:
             x = x.unsqueeze(0)
         return self.network(x)
+    
 class PPOCollector:
     def __init__(self, env, lambda_=0.01, learning_rate=0.0003, gamma=0.99):
         self.env = env
@@ -88,13 +94,13 @@ class PPOCollector:
         ratio = torch.exp(new_log_probs - old_log_probs)
 
         # First term: importance weighted advantages
-        surrogate = ratio * advantages
+        advantage_estimate = ratio * advantages
 
         # Second term: KL penalty (following eq 6.47)
         kl_penalty = self.lambda_ * torch.clamp(torch.log(1.0 / new_probs[range(len(actions)), actions]), min=-10, max=10)
 
-        # Combined objective (eq 6.50)
-        objective = surrogate - kl_penalty
+        # Combined PPO objective (eq 6.47)
+        objective = advantage_estimate - kl_penalty
 
         return objective.mean()
 
@@ -139,13 +145,14 @@ class PPOCollector:
         if len(values.shape) == 0:
             values = values.unsqueeze(0)
         
-        # Calculate ratios and surrogate objectives
+        # Calculate ratios and advantage estimate in the PPO objective 
         ratios = torch.exp(new_log_probs - old_log_probs)
-        surr1 = ratios * advantages
-        surr2 = torch.clamp(ratios, 1-self.clip_epsilon, 1+self.clip_epsilon) * advantages
+        advantage_estimate1 = ratios * advantages
+        advantage_estimate2 = torch.clamp(ratios, 1-self.clip_epsilon, 1+self.clip_epsilon) * advantages
+        # do this to avoid NaN values when ratio/probabilities too small
         
         # Calculate losses
-        policy_loss = -torch.min(surr1, surr2).mean()
+        policy_loss = -torch.min(advantage_estimate1, advantage_estimate2).mean()
         value_loss = 0.5 * ((returns - values) ** 2).mean()
         total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy
         
@@ -154,7 +161,7 @@ class PPOCollector:
         self.value_optimizer.zero_grad()
         total_loss.backward()
         
-        # Clip gradients
+        # Clip gradients to avoid NaN values when gradient too small
         nn.utils.clip_grad_norm_(self.policy_network.parameters(), self.max_grad_norm)
         nn.utils.clip_grad_norm_(self.value_network.parameters(), self.max_grad_norm)
         
@@ -197,7 +204,7 @@ class PPOCollector:
         return states, actions, rewards, probs, total_reward
 
 
-    def train(self, n_epochs=100, batch_size=64):
+    def train(self, n_epochs=40):
         """Train using PPO following lecture notes algorithm"""
         for epoch in range(n_epochs):
             # Collect trajectory using current policy (π_k)
@@ -219,14 +226,14 @@ class PPOCollector:
             self.policy_optimizer.step()
             
             if epoch % 10 == 0:
-                print(f"Epoch {epoch}, Total Reward: {total_reward:.2f}")
+                print(f"Epoch {epoch}, Total Reward: {total_reward:.2f}, learning rate={self.learning_rate}")
                 
         return total_reward
 
 
 
 def run_ppo_test():
-    from collection_draft import PACKPOOL
+    from phase3.collection_draft_ppo import PACKPOOL
     import matplotlib.pyplot as plt
     
     # Initialize environment and agent
@@ -241,7 +248,7 @@ def run_ppo_test():
     
     # Train and track rewards
     rewards = []
-    for i in range(100):  # 100 epochs
+    for i in range(40):  # 40 epochs
         reward = agent.train(n_epochs=1)  # Train for one epoch
         rewards.append(reward)
         if i % 10 == 0:
@@ -252,7 +259,7 @@ def run_ppo_test():
     plt.plot(rewards)
     plt.xlabel('Episode')
     plt.ylabel('Total Reward')
-    plt.title('PPO Learning Curve')
+    plt.title(f'PPO Learning Curve, learning rate={agent.learning_rate}')
     plt.grid(True)
     plt.show()
 
